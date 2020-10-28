@@ -1,0 +1,64 @@
+---
+title: "Congress"
+author: "Jeremy Bruton"
+date: "10/28/2020"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+#Load in the historical data
+Historical_Returns <- read.csv("Data/History.csv")
+```
+
+```{r}
+#Filter only the necessary states and years 
+Historical_Returns <- Historical_Returns %>%
+  filter(state == "Delaware"| state == "Florida" | state == "Colorado" | state == "Kentucky" | state == "South Carolina" | state == "Montana")%>%
+  filter(year>= 2000)
+```
+
+```{r}
+#Filter so that I get a dataset with just the winners of each race... one winning canidate Tom Tancredo was missing a party... he was Republican so fill that in manually 
+Final <- Historical_Returns %>%
+  group_by(state,year,district) %>%
+  top_n(1, candidatevotes)
+
+Final$party <- ifelse(Final$candidate == "Thomas G. Tancredo", "republican", Final$party)
+```
+
+```{r}
+#Code a Dem win as 1 and a Rep win as 0
+Final$party <- ifelse(Final$party == "democrat",1,0)
+
+Final <- Final %>%
+  rename("Winner" = party)
+```
+
+```{r}
+#Code the year as the correct Congress 
+Final$year <- ifelse(Final$year == "2018",116,ifelse(Final$year == "2016", 115, ifelse(Final$year == "2014", 114, ifelse(Final$year == "2012", 113, ifelse(Final$year == "2010", 112, ifelse(Final$year == "2008", 111, ifelse(Final$year == "2006", 110, ifelse(Final$year == "2004", 109, ifelse(Final$year == "2002", 108,107)))))))))
+```
+
+```{r}
+#Filter out the columns that I don't need 
+Final <- Final %>%
+  select(year,state_po,district,Winner) %>%
+  rename("congress" = year, "state_abbrev" = state_po)
+```
+
+```{r}
+#Load in the ideology data from the VoteView project
+Ideology <- read.csv("Data/VoteViewIdeology.csv")
+```
+
+```{r}
+#Filter only the necessary states and years
+Ideology <- Ideology %>%
+  filter(state_abbrev == "DE" | state_abbrev == "CO" | state_abbrev == "FL" | state_abbrev == "KY" | state_abbrev == "SC" | state_abbrev == "MT") %>%
+  filter(congress >= 106)
+```
+
