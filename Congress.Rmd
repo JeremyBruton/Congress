@@ -17,8 +17,16 @@ Historical_Returns <- read.csv("Data/History.csv")
 ```{r}
 #Filter only the necessary states and years 
 Historical_Returns <- Historical_Returns %>%
-  filter(state == "Delaware"| state == "Florida" | state == "Colorado" | state == "Kentucky" | state == "South Carolina" | state == "Montana")%>%
-  filter(year>= 2000)
+  filter(state == "Delaware"| state == "Florida" | state == "Colorado" | state == "Kentucky" | state == "South Carolina" | state == "Montana")
+
+Historical_Returns1 <- Historical_Returns %>%
+  group_by(state,year,district) %>%
+  top_n(1, candidatevotes)
+
+Historical_Returns1$district <- ifelse(Historical_Returns1$district == 0,1,Historical_Returns1$district)
+
+Historical_Returns <- Historical_Returns %>%
+  filter(year >= 2000)
 ```
 
 ```{r}
@@ -46,8 +54,62 @@ Final$year <- ifelse(Final$year == "2018",116,ifelse(Final$year == "2016", 115, 
 ```{r}
 #Filter out the columns that I don't need 
 Final <- Final %>%
-  select(year,state_po,district,Winner) %>%
+  select(year,state_po,district,Winner, candidate) %>%
   rename("congress" = year, "state_abbrev" = state_po)
+```
+
+```{r}
+#Create a lead variable that shows the winning share of the last
+DemReturns <- Historical_Returns %>%
+  filter(party == "democrat")
+  
+DemReturns$demvoteshare <- (DemReturns$candidatevotes/DemReturns$totalvotes)*100
+
+DemReturns$demvoteshare <- round(DemReturns$demvoteshare, 3)
+```
+
+```{r}
+#Code the year as the correct Congress 
+DemReturns$year <- ifelse(DemReturns$year == "2018",116,ifelse(DemReturns$year == "2016", 115, ifelse(DemReturns$year == "2014", 114, ifelse(DemReturns$year == "2012", 113, ifelse(DemReturns$year == "2010", 112, ifelse(DemReturns$year == "2008", 111, ifelse(DemReturns$year == "2006", 110, ifelse(DemReturns$year == "2004", 109, ifelse(DemReturns$year == "2002", 108,107)))))))))
+```
+
+```{r}
+#change the year to # congress
+DemReturns <- DemReturns %>%
+  rename("congress" = year)%>%
+  rename("state_abbrev" = state_po)%>%
+  select(congress,state_abbrev,district,demvoteshare)
+```
+
+```{r}
+DemReturns1 <- DemReturns %>%
+  filter(congress == 116)
+```
+
+```{r}
+#join the dem vote share results to the final dataset 
+Final <- left_join(Final,DemReturns, by = c("congress","state_abbrev","district"))
+```
+
+```{r}
+#Filter out the midterm elections 
+Final <- Final %>%
+  filter(congress == "115"| congress == "113" | congress == "111" | congress == "109" | congress == "107")
+```
+
+```{r}
+#create a lead variable that shows the demvote share for each district in the preceding election 
+
+Final$demvoteshare <- ifelse(is.na(Final$demvoteshare == T),0,Final$demvoteshare)
+
+Final <- Final %>%
+  group_by(district,state_abbrev)%>%
+ arrange(congress, .by_group = T) %>%
+  mutate(Last.Dem.Voteshare = lag(demvoteshare))%>%
+  filter(!is.na(Last.Dem.Voteshare == T))%>%
+  select(!demvoteshare & !state)
+  
+remove(DemReturns, Historical_Returns)
 ```
 
 ```{r}
@@ -60,5 +122,365 @@ Ideology <- read.csv("Data/VoteViewIdeology.csv")
 Ideology <- Ideology %>%
   filter(state_abbrev == "DE" | state_abbrev == "CO" | state_abbrev == "FL" | state_abbrev == "KY" | state_abbrev == "SC" | state_abbrev == "MT") %>%
   filter(congress >= 106)
+```
+
+```{r}
+#change their party codes to republican and democrat
+Ideology$party_code <- ifelse(Ideology$party_code == 100,"democrat","republican")
+```
+
+```{r}
+Ideology <- Ideology %>%
+  rename("district" = district_code)%>%
+  select(district, congress, state_abbrev, nominate_dim1)
+```
+
+```{r}
+#Join the datasets together 
+Final$district <- ifelse(Final$district == 0,1,Final$district)
+
+Final <- right_join(Final,Ideology, by = c("congress","district","state_abbrev"))
+```
+
+```{r}
+#Create a lag variable to show the current district's rep ideology heading into each election 
+Final <- Final %>%
+  group_by(district,state_abbrev)%>%
+ arrange(congress, .by_group = T)%>%
+  mutate(Rep.Ideology = lag(nominate_dim1))%>%
+  filter(!is.na(Winner == T))%>%
+  select(!nominate_dim1)
+```
+
+```{r}
+#Clean data and set up so that it counts how many terms each rep had served in office before a given election
+Historical_Returns1 <- Historical_Returns1 %>%
+  select(year,state_po,district,candidate, party) %>%
+  group_by(state_po,district,candidate)%>%
+  arrange(year, .by_group = T)%>%
+  mutate(terms = row_number()-1)
+
+Historical_Returns2 <- Historical_Returns1 %>%
+  filter(year >= 2000)
+
+Historical_Returns2$year <- ifelse(Historical_Returns2$year == "2018",116,ifelse(Historical_Returns2$year == "2016", 115, ifelse(Historical_Returns2$year == "2014", 114, ifelse(Historical_Returns2$year == "2012", 113, ifelse(Historical_Returns2$year == "2010", 112, ifelse(Historical_Returns2$year == "2008", 111, ifelse(Historical_Returns2$year == "2006", 110, ifelse(Historical_Returns2$year == "2004", 109, ifelse(Historical_Returns2$year == "2002", 108,107)))))))))
+
+Historical_Returns2 <- Historical_Returns2 %>%
+  rename("congress" = year)%>%
+  filter(congress == "115"| congress == "113" | congress == "111" | congress == "109")
+```
+
+```{r}
+#Dem numbers are negative and Rep numbers positive 
+Historical_Returns2$terms <- with(Historical_Returns2, ifelse(party == "democrat", -terms, terms))
+```
+
+```{r}
+#Manually fix when an incumbent did not win and when names are mixed for Colorado 
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "4" & Historical_Returns2$state_po == "CO",3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "3" & Historical_Returns2$state_po == "CO",-2, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "3" & Historical_Returns2$state_po == "CO",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "3" & Historical_Returns2$state_po == "CO",3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 109 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "CO",3, Historical_Returns2$terms)
+```
+
+```{r}
+#Manually fix when an incumbent did not win and when names are mixed for Kentucky
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "2" & Historical_Returns2$state_po == "KY",2, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "2" & Historical_Returns2$state_po == "KY",4, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "3" & Historical_Returns2$state_po == "KY",-1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "3" & Historical_Returns2$state_po == "KY",-3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "3" & Historical_Returns2$state_po == "KY",-5, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 109 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "KY",12, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "KY",14, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "KY",16, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "KY",18, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "KY",-4, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "KY",2, Historical_Returns2$terms)
+```
+
+```{r}
+#Manually fix when an incumbent did not win and when names are mixed for Montana
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "1" & Historical_Returns2$state_po == "MT",1, Historical_Returns2$terms)
+```
+
+```{r}
+#Manually fix when an incumbent did not win and when names are mixed for South Carolina
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 109 & Historical_Returns2$district == "1" & Historical_Returns2$state_po == "SC",2, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "1" & Historical_Returns2$state_po == "SC",4, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "1" & Historical_Returns2$state_po == "SC",4, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 109 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "SC",-11, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "SC",-13, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 109 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "SC",-6, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "SC",-8, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "SC",-10, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "SC",-12, Historical_Returns2$terms)
+```
+
+```{r}
+#Manually fix Florida 
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 109 & Historical_Returns2$district == "15" & Historical_Returns2$state_po == "FL",5, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 109 & Historical_Returns2$district == "23" & Historical_Returns2$state_po == "FL",-6, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "8" & Historical_Returns2$state_po == "FL",4, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "9" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "16" & Historical_Returns2$state_po == "FL",-1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "23" & Historical_Returns2$state_po == "FL",-8, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 111 & Historical_Returns2$district == "24" & Historical_Returns2$state_po == "FL",3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "2" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "FL",-10, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "10" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "11" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "12" & Historical_Returns2$state_po == "FL",3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "13" & Historical_Returns2$state_po == "FL",18, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "14" & Historical_Returns2$state_po == "FL",-3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "15" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "16" & Historical_Returns2$state_po == "FL",3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "17" & Historical_Returns2$state_po == "FL",2, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "18" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "20" & Historical_Returns2$state_po == "FL",-10, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "21" & Historical_Returns2$state_po == "FL",-1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "23" & Historical_Returns2$state_po == "FL",-4, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "24" & Historical_Returns2$state_po == "FL",-1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "25" & Historical_Returns2$state_po == "FL",5, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "26" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 113 & Historical_Returns2$district == "27" & Historical_Returns2$state_po == "FL",11, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "3" & Historical_Returns2$state_po == "FL",2, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "5" & Historical_Returns2$state_po == "FL",-12, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "6" & Historical_Returns2$state_po == "FL",2, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "7" & Historical_Returns2$state_po == "FL",12, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "11" & Historical_Returns2$state_po == "FL",4, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "12" & Historical_Returns2$state_po == "FL",5, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "13" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "20" & Historical_Returns2$state_po == "FL",-12, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "21" & Historical_Returns2$state_po == "FL",-2, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "22" & Historical_Returns2$state_po == "FL",-3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "23" & Historical_Returns2$state_po == "FL",-6, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "24" & Historical_Returns2$state_po == "FL",-3, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "25" & Historical_Returns2$state_po == "FL",7, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "26" & Historical_Returns2$state_po == "FL",1, Historical_Returns2$terms)
+
+Historical_Returns2$terms <- ifelse(Historical_Returns2$congress == 115 & Historical_Returns2$district == "27" & Historical_Returns2$state_po == "FL",13, Historical_Returns2$terms)
+```
+
+```{r}
+#Merge the final data with the terms data 
+Historical_Returns2 <- Historical_Returns2 %>%
+  rename("state_abbrev" = state_po)
+
+Final <- merge(Final,Historical_Returns2, by = c("congress","state_abbrev","district"))
+```
+
+```{r}
+#This exported the current dataset to a csv so that i could manually enter the funding data I then reload the dataset into R  https://www.opensecrets.org/ <--- This where the funding data comes from 
+#Final <- Final %>%
+ # arrange(state_abbrev, congress,district)
+
+#write.csv(Final,"Final.csv")
+
+Final <- read.csv("Data/Final.csv")
+
+Final <- Final %>%
+  select(!c(DemFund,RepFund))
+```
+
+```{r}
+#The demographic data for the 2020 dataset comes from the following sources
+#median age: the 2019 American Community Survey 1-Year https://www.census.gov/mycd/
+#%white: the 2019 American Community Survey 1-Year https://www.census.gov/mycd/
+#education: the 2019 American Community Survey 1-Year https://www.census.gov/mycd/
+#rural %: https://www.dailykos.com/stories/2018/2/21/1742660/-The-ultimate-Daily-Kos-Elections-guide-to-all-of-our-data-sets#16.
+Current <- read.csv("2020.csv")
+```
+
+```{r}
+#Merge the ideology data onto the Current dataset
+Ideology1 <- Ideology %>%
+  filter(congress == 116)
+
+Current <- merge(Current,Ideology1, by = c("district","state_abbrev"))
+
+Current <- Current %>%
+  select(!Rep.Ideology) %>%
+  rename("Rep.Ideology" = nominate_dim1)
+```
+
+```{r}
+#merge the demographic data of the two datasets together 
+Final <- read.csv("Data/Final1.csv")
+
+Final1 <- Final %>%
+  filter(congress == 115)%>%
+  select(X.Rural,district,state_abbrev)%>%
+  rename("Rural" = X.Rural)
+
+Current <- merge(Current,Final1, by = c("district","state_abbrev"))
+
+Current <- Current %>%
+  select(!c(Dem.fund,Rep.Fund,X.Rural,congress,Winner.Prediction))%>%
+  rename("White%" = X.White)
+
+remove(Final1,Ideology1)
+```
+
+```{r}
+#Add the dem returns in the last election variable to the current dataset
+DemReturns1$district <- ifelse(DemReturns1$district == 0,1,DemReturns1$district)
+
+Current <- merge(Current,DemReturns1, by = c("state_abbrev","district"))
+
+Current <- Current %>%
+  select(!c(Last.Dem.Voteshare,congress)) %>%
+  rename("Last.Dem.Voteshare" = demvoteshare)
+
+remove(DemReturns1)
+```
+
+```{r}
+#The demogrpahic data for the training dataset comes from the following sources
+#median age: the 2019 American Community Survey 1-Year https://www.census.gov/mycd/
+#%white: the 2019 American Community Survey 1-Year https://www.census.gov/mycd/
+#education: https://www.dailykos.com/stories/2018/2/21/1742660/-The-ultimate-Daily-Kos-Elections-guide-to-all-of-our-data-sets#16.
+#rural %: https://www.dailykos.com/stories/2018/2/21/1742660/-The-ultimate-Daily-Kos-Elections-guide-to-all-of-our-data-sets#16.
+
+#Thedailykos data is derived from the 2010 census 
+
+#The age data comes from the 2019 American Community Survey 1-Year https://www.census.gov/mycd/  
+Final <- read.csv("Data/Final1.csv")
+```
+
+```{r}
+#Drop the observations from the 109 and 111 congress because demographic data was too hard to find... could still use these observations later if demographic data was found and then implemented 
+
+Final <- Final %>%
+  filter(congress == 115 | congress == 113)
+```
+
+```{r}
+#Merge demographic data from current dataset to training dataset
+Current1 <- Current %>%
+  select(c(district,state_abbrev,Median.Age,`White%`))
+
+Final <- merge(Final,Current1, by=c("district","state_abbrev"))
+
+Final <- Final %>%
+  select(!c(X.White,Median.Age.x,DemFund,RepFund))%>%
+  rename("Median.Age" = Median.Age.y)%>%
+  rename("Rural" = X.Rural)
+```
+
+```{r}
+#Fill in each years Presidential Approval Rating and Satisfaction with the country number from the Gallup poll 
+#https://news.gallup.com/poll/116479/barack-obama-presidential-job-approval.aspx
+#https://news.gallup.com/poll/116500/presidential-approval-ratings-george-bush.aspx
+#https://news.gallup.com/poll/1669/general-mood-country.aspx\
+
+Final$presidential.approval <- ifelse(Final$congress == 109,50,ifelse(Final$congress == 111, 25, ifelse(Final$congress == 113, -52,-54)))
+
+Final$country.satisfaction <- ifelse(Final$congress == 109,41,ifelse(Final$congress == 111, 9, ifelse(Final$congress == 113, -30,-28))) 
+```
+
+```{r}
+#Change one variable to as.numeric from a character
+Final$Rep.DemFunds <- gsub(",","",Final$Rep.DemFunds)
+
+Final$Rep.DemFunds <- as.numeric(Final$Rep.DemFunds) 
+
+Current$Rep.DemFunds <- gsub(",","",Current$Rep.DemFunds)
+
+Current$Rep.DemFunds <- as.numeric(Current$Rep.DemFunds) 
+```
+
+```{r}
+#Remove one observation from the training dataset that was an outlier skewing the results of the logit regression.. The observation was the Florida 18th district in the 113th congress where a Rep canidate out funded a Dem canidate by over 14 million dollars yet the Democratic canidate won.. This observation had such a large spending gap relative to the other observations that it seemed to be an outlier that should be removed as it was drastically skewing the coef in the model 
+Final <- Final %>%
+  filter(!Rep.DemFunds > 14000000)
+```
+
+```{r}
+#Use the GLM package to run a logistic regression model 
+Train_Model <- glm(data = Final, Winner ~ Last.Dem.Voteshare + Rep.Ideology + Rep.DemFunds + terms + Education + Rural + Median.Age + Rural*Education + Rep.DemFunds*Education , family = binomial(link = "logit"))
+```
+
+```{r}
+summary(Train_Model)
+```
+
+```{r}
+Current <- Current %>%
+  select(!c(country.satisfaction, presidential.approval))
+```
+
+```{r}
+# Make probability predictions for the 49 races of interest
+Current$Prediction <- predict(Train_Model,Current, type = "response")
+```
+
+```{r}
+Current$Prediction <- Current$Prediction*100
+Current$Probability <- round(Current$Prediction, 2)
+```
+
+```{r}
+Current$Prediction <- ifelse(Current$Probability >=50, "D","R")
 ```
 
