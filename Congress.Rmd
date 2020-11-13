@@ -417,14 +417,13 @@ Final <- Final %>%
 
 ```{r}
 #Merge demographic data from current dataset to training dataset
-Current1 <- Current %>%
-  select(c(district,state_abbrev,Median.Age,`White%`))
+#Current1 <- Current %>%
+#  select(c(district,state_abbrev,Median.Age,`White%`))
 
-Final <- merge(Final,Current1, by=c("district","state_abbrev"))
+#Final <- merge(Final,Current1, by=c("district","state_abbrev"))
 
 Final <- Final %>%
-  select(!c(X.White,Median.Age.x,DemFund,RepFund))%>%
-  rename("Median.Age" = Median.Age.y)%>%
+  rename("White%" = X.White)%>%
   rename("Rural" = X.Rural)
 ```
 
@@ -466,8 +465,18 @@ summary(Train_Model)
 ```
 
 ```{r}
+Final <- Final %>% 
+  select(!c(`White%`,presidential.approval,district))
+```
+
+```{r, results="asis"}
+library(stargazer)
+stargazer(Final, type = "html", summary.stat = c("n", "mean","min","max"))
+```
+
+```{r}
 Current <- Current %>%
-  select(!c(country.satisfaction, presidential.approval))
+  select(!c(presidential.approval, `White%`,country.satisfaction))
 ```
 
 ```{r}
@@ -484,3 +493,46 @@ Current$Probability <- round(Current$Prediction, 2)
 Current$Prediction <- ifelse(Current$Probability >=50, "D","R")
 ```
 
+#Use Cross validation on the training dataset to evaluate the predictive ability of the model
+
+```{r, include=FALSE}
+install.packages("ggpubr",repos = "http://cran.us.r-project.org")
+library(ggpubr)
+```
+
+
+```{r, include=FALSE}
+install.packages("gower",repos = "http://cran.us.r-project.org")
+```
+
+```{r, include=FALSE}
+install.packages("lava",repos = "http://cran.us.r-project.org")
+```
+
+```{r, include=FALSE}
+library(caret)
+library(psych)
+```
+
+
+```{r, include=FALSE}
+# Define training control
+set.seed(123) 
+train.control <- trainControl(method = "cv", number = 5)
+```
+
+```{r}
+Final$Winner <- as.factor(Final$Winner)
+```
+
+```{r, include=FALSE}
+model_caret <- train(Winner ~ Last.Dem.Voteshare + Rep.Ideology + Rep.DemFunds + terms + Education + Rural + Median.Age + Rural*Education + Rep.DemFunds*Education,   # model to fit
+                     data = Final,                        
+                     trControl = train.control,              # folds
+                     method = "glm",
+                     family=binomial()) 
+```
+
+```{r, echo=FALSE}
+model_caret$results
+```
